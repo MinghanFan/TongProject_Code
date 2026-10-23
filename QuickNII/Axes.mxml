@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Canvas xmlns:mx="http://www.adobe.com/2006/mxml" width="50" height="50" backgroundColor="0x808080" backgroundAlpha="0.5">
+	<mx:Script>
+		<![CDATA[
+			public var labels:String;
+			public var axisrate:Number=0.8;
+
+			protected function DrawX(x:Number,y:Number):void {
+				graphics.moveTo(x-2.5,y-2);
+				graphics.lineTo(x+2.5,y+2);
+				graphics.moveTo(x-2.5,y+2);
+				graphics.lineTo(x+2.5,y-2);
+			}
+
+			protected function DrawY(x:Number,y:Number):void {
+				graphics.moveTo(x-2,y-2);
+				graphics.lineTo(x,y+0.5);
+				graphics.moveTo(x-2,y+3);
+				graphics.lineTo(x+2,y-2);
+			}
+
+			protected function DrawZ(x:Number,y:Number):void {
+				graphics.moveTo(x-2.5,y-2);
+				graphics.lineTo(x+2.5,y-2);
+				graphics.lineTo(x-2.5,y+2);
+				graphics.lineTo(x+2.5,y+2);
+			}
+
+			override protected function commitProperties():void {
+				super.commitProperties();
+
+				const size:Number=10;
+				const arrow:Number=2;
+				const circle:Number=4;
+
+				const xx:Number=size/2;
+				const xy:Number=height-1-size/2;
+				const yx:Number=width-1-xx;
+				const yy:Number=height-1-xy;
+				const zx:Number=width-1-5*size/4;
+				const zy:Number=height-1-5*size/4;
+
+				graphics.clear();
+				graphics.lineStyle(1,0xFF00);
+				switch(labels.charAt(0)) {
+					case "x":DrawX(xx,xy);break;
+					case "y":DrawY(xx,xy);break;
+					case "z":DrawZ(xx,xy);break;
+				}
+				switch(labels.charAt(1)) {
+					case "x":DrawX(yx,yy);break;
+					case "y":DrawY(yx,yy);break;
+					case "z":DrawZ(yx,yy);break;
+				}
+				switch(labels.charAt(2)) {
+					case "x":DrawX(zx,zy);break;
+					case "y":DrawY(zx,zy);break;
+					case "z":DrawZ(zx,zy);break;
+				}
+
+				const u:Number=size;
+				const v:Number=size;
+
+				graphics.moveTo(yx,v);
+				graphics.lineTo(yx+arrow,v+arrow);
+				graphics.moveTo(yx-arrow,v+arrow);
+				graphics.lineTo(yx,v);
+
+				graphics.lineTo(yx,xy);
+
+				graphics.lineTo(u,xy);
+				graphics.lineTo(u+arrow,xy-arrow);
+				graphics.moveTo(u+arrow,xy+arrow);
+				graphics.lineTo(u,xy);
+
+				graphics.drawCircle(yx,xy,circle);
+				graphics.drawCircle(yx,xy,1);
+			}
+		]]>
+	</mx:Script>
+</mx:Canvas>

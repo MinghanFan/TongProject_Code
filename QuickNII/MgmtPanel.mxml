@@ -1,0 +1,673 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mx:Window xmlns:mx="http://www.adobe.com/2006/mxml" layout="absolute" width="100%" height="100%" title="{titl}"
+		   creationComplete="titlewindow1_activateHandler(event)" xmlns:containers="flexlib.mdi.containers.*" xmlns:local="*"
+		   showStatusBar="false">
+	<mx:Script>
+		<![CDATA[
+			import flexlib.mdi.events.MDIWindowEvent;
+
+			import mx.collections.ArrayCollection;
+			import mx.controls.Alert;
+			import mx.events.CloseEvent;
+			import mx.events.CollectionEvent;
+			import mx.events.DataGridEvent;
+			import mx.events.ListEvent;
+			import mx.events.ResizeEvent;
+
+			[Bindable] static public var titl:String="Empty";
+			static protected var xmltitl:String;
+			static protected var first:int;
+			static protected var last:int;
+			[Bindable] public static var rows:ArrayCollection=new ArrayCollection;
+			[Bindable] public static var currentidx:int=-1;
+			public static var baseurl:String;
+			private static var baseJson:Object=null;
+			[Bindable] public static var main:QuickNII;
+
+			public static var requestString:Vector.<Number>; //!!			
+
+			protected function titlewindow1_activateHandler(event:Event):void {
+				serieswindow.height=chartwindow.height=height-55;
+				chartwindow.width=width-chartwindow.x;
+				stuff.selectedIndex=currentidx;
+				interpolate();
+			}
+
+			protected function button1_clickHandler(event:MouseEvent):void {
+				const f:File=new File;
+				f.addEventListener(Event.SELECT,descriptorSelected);
+				f.browseForOpen("Series",[new FileFilter("QuickNII Series", "*.xml;*json")]);
+			}
+
+			protected function descriptorSelected(e:Event):void {
+				stuff.selectedIndex=-1;
+				rows.removeAll();
+				baseJson=null;
+				const f:File=e.target as File;
+				baseurl=f.parent.url;
+				const fs:FileStream=new FileStream;
+				fs.open(f,FileMode.READ);
+				var text:String=fs.readUTFBytes(fs.bytesAvailable);
+				fs.close();
+				switch(f.extension) {
+					case "xml":
+						const xml:XML=XML(text);
+						titl=xmltitl=xml.@name;
+						for each(var slice:XML in xml.slice) {
+							var anchorstring:String=slice.@anchoring;
+							var anchoring:Vector.<Number>=null;
+							if(anchorstring!=null && anchorstring!="") {
+								const urlvar:URLVariables=new URLVariables(anchorstring.replace(/&amp;/g,"&"));
+								anchoring=new <Number>[
+									parseFloat(urlvar.ox),parseFloat(urlvar.oy),parseFloat(urlvar.oz),
+									parseFloat(urlvar.ux),parseFloat(urlvar.uy),parseFloat(urlvar.uz),
+									parseFloat(urlvar.vx),parseFloat(urlvar.vy),parseFloat(urlvar.vz)];
+							}
+							rows.addItem(new SliceData(slice.@filename,slice.@nr,slice.@width,slice.@height,anchoring));
+						}
+						break;
+					case "json":
+						baseJson=JSONp.parse(text);
+						titl=xmltitl=baseJson.name;
+						var slices:Array=baseJson.slices as Array;
+						for(var i:int=0;i<slices.length;i++) {
+							var o:Object=slices[i];
+							anchoring=null;
+							if(o.hasOwnProperty("anchoring")) {
+								var a:Array=o.anchoring as Array;
+								anchoring=new Vector.<Number>(a);//!!
+							}
+							rows.addItem(new SliceData(o.filename,o.nr,o.width,o.height,anchoring));
+						}
+						break;
+					default:
+						Alert.show("Unknown file: "+f.extension);
+						return;
+				}
+				first=rows.getItemAt(0).sno;
+				last=rows.getItemAt(rows.length-1).sno;
+				interpolate();
+			}
+
+			public static function interpolate():void {
+				dointerpolate();
+				updategraphdata();
+				rows.dispatchEvent(new CollectionEvent(CollectionEvent.COLLECTION_CHANGE));
+			}
+			private static function dointerpolate():void {
+				if(rows.length==0)return; // nothing to set
+
+				var i:int,j:int;
+				const anchorings:Vector.<int>=new Vector.<int>;
+				var regressions:Vector.<LinReg>=new Vector.<LinReg>;
+				for(i=0;i<11;i++)regressions.push(new LinReg);
+
+				var w:SliceData;
+				var ww:SliceData;
+				var sno:int;
+				for(i=0;i<rows.length;i++) {
+					w=rows.getItemAt(i) as SliceData;
+					if(w.hasanchoring) {
+						anchorings.push(i);
+						for(j=0;j<11;j++)
+							regressions[j].add(w.sno,w.unpacked[j]);
+					}
+				}
+
+				const control:Vector.<int>=new Vector.<int>;
+
+				if(anchorings.length==0) {
+					var maxw:Number=0;
+					var maxh:Number=0;
+					for(i=0;i<rows.length;i++) {
+						w=rows.getItemAt(i) as SliceData;
+						if(maxw<w.width)maxw=w.width;
+						if(maxh<w.height)maxh=w.height;
+					}
+					switch(main.valbox.decompcfg.selectedLabel) {
+						case "Coronal":
+							w=rows.getItemAt(0) as SliceData;
+							w.setUnpacked(new <Number>[main.xdim/1,main.ydim-1,main.zdim/2,1,0,0,0,0,-1,main.xdim/maxw,main.zdim/maxh]);
+							control.push(0);
+							w=rows.getItemAt(rows.length-1) as SliceData;
+							w.setUnpacked(new <Number>[main.xdim/1,0,main.zdim/2,1,0,0,0,0,-1,main.xdim/maxw,main.zdim/maxh]);
+							control.push(rows.length-1);
+							break;
+
+						case "Sagittal":
+							w=rows.getItemAt(0) as SliceData;
+							w.setUnpacked(new <Number>[main.xdim-1,main.ydim/2,main.zdim/2,0,-1,0,0,0,1,main.ydim/maxw,main.zdim/maxh]);
+							control.push(0);
+							w=rows.getItemAt(rows.length-1) as SliceData;
+							w.setUnpacked(new <Number>[0,main.ydim/2,main.zdim/2,0,-1,0,0,0,1,main.ydim/maxw,main.zdim/maxh]);
+							control.push(rows.length-1);
+							break;
+
+						case "Horizontal":
+							w=rows.getItemAt(0) as SliceData;
+							w.setUnpacked(new <Number>[main.xdim/2,main.ydim/2,main.zdim-1,0,-1,0,1,0,0,main.ydim/maxw,main.xdim/maxh]);
+							control.push(0);
+							w=rows.getItemAt(rows.length-1) as SliceData;
+							w.setUnpacked(new <Number>[main.xdim/2,main.ydim/2,0,0,-1,0,1,0,0,main.ydim/maxw,main.xdim/maxh]);
+							control.push(rows.length-1);
+							break;
+					}
+				}
+				else if(anchorings.length==1) {
+					i=anchorings[0];
+					ww=rows.getItemAt(i) as SliceData;
+
+					if(i!=0) {
+						w=rows.getItemAt(0) as SliceData;
+						var anchoring:Vector.<Number>=new <Number>[
+							main.valbox.decompcfg.selectedLabel=="Sagittal"?main.xdim-1:ww._mx,
+							main.valbox.decompcfg.selectedLabel=="Coronal"?main.ydim-1:ww._my,
+							main.valbox.decompcfg.selectedLabel=="Horizontal"?main.zdim-1:ww._mz];
+						for(j=3;j<11;j++)
+							anchoring.push(ww.unpacked[j]);
+						w.setUnpacked(anchoring);
+						control.push(0);
+					}
+					control.push(i);
+					if(i!=rows.length-1) {
+						w=rows.getItemAt(rows.length-1) as SliceData;
+						anchoring=new <Number>[
+							main.valbox.decompcfg.selectedLabel=="Sagittal"?0:ww._mx,
+							main.valbox.decompcfg.selectedLabel=="Coronal"?0:ww._my,
+							main.valbox.decompcfg.selectedLabel=="Horizontal"?0:ww._mz];
+						for(j=3;j<11;j++)
+							anchoring.push(ww.unpacked[j]);
+						w.setUnpacked(anchoring);
+						control.push(rows.length-1);
+					}
+				} else {
+					if(anchorings[0]!=0) {
+						w=rows.getItemAt(0) as SliceData;
+						anchoring=new Vector.<Number>;
+						for(j=0;j<11;j++)
+							anchoring.push(regressions[j].get(w.sno));
+						w.setUnpacked(anchoring);
+						control.push(0);
+					}
+					for(i=0;i<anchorings.length;i++)
+						control.push(anchorings[i]);
+					if(anchorings[anchorings.length-1]!=rows.length-1) {
+						w=rows.getItemAt(rows.length-1) as SliceData;
+						anchoring=new Vector.<Number>;
+						for(j=0;j<11;j++)
+							anchoring.push(regressions[j].get(w.sno));
+						w.setUnpacked(anchoring);
+						control.push(rows.length-1);
+					}
+				}
+
+				if(anchorings.length==rows.length)return; // not mandatory
+
+				for(i=0;i<control.length-1;i++) {
+					var i1:int=control[i];
+					var w1:SliceData=rows.getItemAt(i1) as SliceData;
+					var i2:int=control[i+1];
+					var w2:SliceData=rows.getItemAt(i2) as SliceData;
+					var linints:Vector.<LinSegment>=new Vector.<LinSegment>;
+					for(var k:int=0;k<11;k++)
+						linints.push(new LinSegment(w1.sno,w1.unpacked[k],w2.sno,w2.unpacked[k]));
+					for(j=i1+1;j<i2;j++) {
+						w=rows.getItemAt(j) as SliceData;
+						anchoring=new Vector.<Number>;
+						for(k=0;k<11;k++)
+							anchoring.push(linints[k].get(w.sno));
+						w.setUnpacked(anchoring);
+					}
+				}
+			}
+
+			protected function stuff_itemDoubleClickHandler(event:ListEvent):void {
+				currentidx=event.rowIndex;
+				const w:SliceData=rows.getItemAt(currentidx) as SliceData;
+				w.pack();
+				main.setImage(baseurl+File.separator+w.filename,w.packed);
+				main.activate();
+				titl=xmltitl;
+			}
+
+			public static function mystic_update():void {
+				if(currentidx<0)return;
+				const w:SliceData=rows.getItemAt(currentidx) as SliceData;
+				w.pack();
+				//!!requeststring=w.anchoring;
+				main.Restore();
+			}
+
+			protected function button3_clickHandler(event:MouseEvent):void {
+				const f:File=new File;
+				f.addEventListener(Event.SELECT,saveSelected);
+				f.browseForSave("Series");
+			}
+			protected function saveSelected(e:Event):void {
+				const f:File=e.target as File;
+				var url:String=f.url;
+				if(url.substr(url.length-4)==".xml")
+					save(f);
+				else{
+					url+=".xml";
+					save(new File(url));
+				}
+			}
+
+			public static function save(f:File):void {
+				const fs:FileStream=new FileStream;
+				fs.open(f,FileMode.WRITE);
+				fs.writeUTFBytes("<?xml version='1.0' encoding='UTF-8'?>\r\n");
+				fs.writeUTFBytes("<series name='"+xmltitl+"' target='"+main.pack+"' target-resolution='"+main.xdim+" "+main.ydim+" "+main.zdim+"'>\r\n");
+				for(var i:int=0;i<rows.length;i++) {
+					var l:SliceData=rows.getItemAt(i) as SliceData;
+					fs.writeUTFBytes("    <slice filename='"+l.filename+"' nr='"+l.sno+"' width='"+l.width+"' height='"+l.height);
+					if(l.hasanchoring) {
+						var a:Vector.<Number>=l.pack();
+						var prefixes:Array=["' anchoring='ox=","&amp;oy=","&amp;oz=","&amp;ux=","&amp;uy=","&amp;uz=","&amp;vx=","&amp;vy=","&amp;vz="];
+						for(var j:int=0;j<9;j++)
+							fs.writeUTFBytes(prefixes[j]+a[j]);
+					}
+					fs.writeUTFBytes("'/>\r\n");
+				}
+				fs.writeUTFBytes("</series>\r\n");
+				fs.close();
+			}
+
+			protected function jsonSave():void {
+				const f:File=new File;
+				f.addEventListener(Event.SELECT,jsonSaveSelected);
+				f.browseForSave("Series");
+			}
+			protected function jsonSaveSelected(e:Event):void {
+				const f:File=e.target as File;
+				var url:String=f.url;
+				if(url.substr(url.length-5)==".json")
+					saveJson(f);
+				else {
+					url+=".json";
+					saveJson(new File(url));
+				}
+			}
+			protected function saveJson(f:File):void {
+				if(baseJson==null) {
+					baseJson=new Object;
+					baseJson.name=xmltitl;
+					baseJson.target=main.pack;
+					baseJson["target-resolution"]=[main.xdim,main.ydim,main.zdim];
+					var slices:Array=[];
+					for(var i:int=0;i<rows.length;i++) {
+						var l:SliceData=rows.getItemAt(i) as SliceData;
+						var o:Object=new Object;
+						o.filename=l.filename;
+						o.nr=l.sno;
+						o.width=l.width;
+						o.height=l.height;
+						slices.push(o);
+					}
+					baseJson.slices=slices;
+				}
+				slices=baseJson.slices;
+				for(i=0;i<rows.length;i++) {
+					l=rows.getItemAt(i) as SliceData;
+					if(l.hasanchoring)slices[i].anchoring=l.pack();
+					else delete slices[i].anchoring;
+				}
+				const fs:FileStream=new FileStream;
+				fs.open(f,FileMode.WRITE);
+				fs.writeUTFBytes(JSONp.stringify(baseJson));
+				fs.close();
+			}
+
+			[Bindable] static public var regressionestimator:ArrayCollection=new ArrayCollection;
+			[Bindable] static public var polylineestimator:ArrayCollection=new ArrayCollection;
+			public static function updategraphdata():void {
+				const hackedScale:Number=NamedTransformation.hackedScale;
+
+				regressionestimator.removeAll();
+				polylineestimator.removeAll();
+
+				if(rows.length==0)return;
+				if(rows.length<2)return;
+
+				const src:SliceData=rows.getItemAt(0) as SliceData;
+				const dst:SliceData=rows.getItemAt(rows.length-1) as SliceData;
+
+				const px:Number=src._mx;
+				const py:Number=src._my;
+				const pz:Number=src._mz;
+				const dx:Number=dst._mx-px;
+				const dy:Number=dst._my-py;
+				const dz:Number=dst._mz-pz;
+
+				const delta:Number=Math.sqrt(dx*dx+dy*dy+dz*dz);
+
+				var i:int;
+				var xspacing:LinReg=new LinReg;
+				var yspacing:LinReg=new LinReg;
+				var zspacing:LinReg=new LinReg;
+				var rot1:LinReg=new LinReg;
+				var rot2:LinReg=new LinReg;
+				var rot3:LinReg=new LinReg;
+
+				var prevanch:SliceData=null;
+
+				for(i=0;i<rows.length;i++) {
+					var l:SliceData=rows.getItemAt(i) as SliceData;
+
+					var uvx:Number=l._uy*l._vz-l._uz*l._vy;
+					var uvy:Number=l._uz*l._vx-l._ux*l._vz;
+					var uvz:Number=l._ux*l._vy-l._uy*l._vx;
+
+					var oxpxwx:Number=(l._mx-px)*uvx;
+					var oypywy:Number=(l._my-py)*uvy;
+					var ozpzwz:Number=(l._mz-pz)*uvz;
+					var dxwx:Number=dx*uvx;
+					var dywy:Number=dy*uvy;
+					var dzwz:Number=dz*uvz;
+
+					var custom:Number=(oxpxwx+oypywy+ozpzwz)/(dxwx+dywy+dzwz);
+
+					if(l.hasanchoring) {
+						if(prevanch!=null) {
+							xspacing.add((l.sno+prevanch.sno)/2,(l._mx-prevanch._mx)/(l.sno-prevanch.sno));
+							yspacing.add((l.sno+prevanch.sno)/2,(l._my-prevanch._my)/(l.sno-prevanch.sno));
+							zspacing.add((l.sno+prevanch.sno)/2,(l._mz-prevanch._mz)/(l.sno-prevanch.sno));
+						}
+						prevanch=l;
+					}
+					var n:SliceData=i<rows.length-1?rows.getItemAt(i+1) as SliceData:null;
+					var xs:Number=n==null?Number.NaN:(n._mx-l._mx)/(n.sno-l.sno);
+					var ys:Number=n==null?Number.NaN:(n._my-l._my)/(n.sno-l.sno);
+					var zs:Number=n==null?Number.NaN:(n._mz-l._mz)/(n.sno-l.sno);
+
+					var u:Vector3D=new Vector3D(l._ux,l._uy,l._uz);
+					var v:Vector3D=new Vector3D(l._vx,l._vy,l._vz);
+					var nr:Vector3D=v.crossProduct(u);nr.normalize();
+
+					var o:Object=new Object;
+					o.sno=l.sno;
+					o.HStretch=l._urate;
+					o.VStretch=l._vrate;
+					if(main.valbox.decompcfg.selectedLabel=="Coronal") {
+						o.MainPosition=l._my;
+						o.MainSpacing=ys;
+						rot1.add(l.sno,o.Rotation1=Math.asin(nr.z)*180/Math.PI);
+						rot2.add(l.sno,o.Rotation2=-Math.atan2(nr.x,nr.y)*180/Math.PI);
+
+						if(Math.abs(nr.y)<0.00001)
+							rot3.add(l.sno,o.Rotation3=0);
+						else {
+							//!! works, but probably could be simpler
+							var ctx:Number=Math.sqrt(1/(1+nr.x*nr.x/nr.y/nr.y));
+							var ct:Vector3D=new Vector3D(ctx,-ctx*nr.x/nr.y);
+							var cdt:Number=-ct.dotProduct(u);
+							if(cdt<-1)cdt=-1;
+							if(cdt>1)cdt=1;
+							rot3.add(l.sno,o.Rotation3=(ct.crossProduct(u).dotProduct(nr)<0?1:-1)*Math.acos(cdt)*180/Math.PI);
+						}
+						
+						o.HPosition=l._mx;
+						o.HSpacing=xs;
+						o.VPosition=l._mz;
+						o.VSpacing=zs;
+					} else if(main.valbox.decompcfg.selectedLabel=="Sagittal") {
+						o.MainPosition=l._mx;
+						o.MainSpacing=xs;
+						rot1.add(l.sno,o.Rotation1=-Math.asin(nr.z)*180/Math.PI);
+						rot2.add(l.sno,o.Rotation2=-Math.atan2(nr.y,-nr.x)*180/Math.PI);
+
+						if(Math.abs(nr.x)<0.00001)
+							rot3.add(l.sno,o.Rotation3=0);
+						else {
+							//!! works, but probably could be simpler
+							var sty:Number=Math.sqrt(1/(1+nr.y*nr.y/nr.x/nr.x));
+							var st:Vector3D=new Vector3D(-sty*nr.y/nr.x,sty);
+							var sdt:Number=-st.dotProduct(u);
+							if(sdt<-1)sdt=-1;
+							if(sdt>1)sdt=1;
+							rot3.add(l.sno,o.Rotation3=(st.crossProduct(u).dotProduct(nr)<0?1:-1)*Math.acos(sdt)*180/Math.PI);
+						}
+
+						o.HPosition=l._my;
+						o.HSpacing=ys;
+						o.VPosition=l._mz;
+						o.VSpacing=zs;
+					} else if(main.valbox.decompcfg.selectedLabel=="Horizontal") {
+						o.MainPosition=l._mz;
+						o.MainSpacing=zs;
+						rot1.add(l.sno,o.Rotation1=-Math.asin(nr.x)*180/Math.PI)
+						rot2.add(l.sno,o.Rotation2=-Math.atan2(nr.y,nr.z)*180/Math.PI);
+
+						if(Math.abs(nr.z)<0.00001)
+							rot3.add(l.sno,o.Rotation3=0);
+						else {
+							//!! works, but probably could be simpler
+							var hty:Number=Math.sqrt(1/(1+nr.y*nr.y/nr.z/nr.z));
+							var ht:Vector3D=new Vector3D(0,hty,-hty*nr.y/nr.z);
+							var hdt:Number=-ht.dotProduct(u);
+							if(hdt<-1)hdt=-1;
+							if(hdt>1)hdt=1;
+							rot3.add(l.sno,o.Rotation3=(ht.crossProduct(u).dotProduct(nr)<0?1:-1)*Math.acos(hdt)*180/Math.PI);
+						}
+
+						o.HPosition=l._my;
+						o.HSpacing=ys;
+						o.VPosition=l._mx;
+						o.VSpacing=xs;
+					}
+					else throw Error("!!!");
+
+					o.MainPosition*=hackedScale;
+//					o.MainSpacing*=hackedScale;
+					o.HPosition*=hackedScale;
+//					o.HSpacing*=hackedScale;
+					o.VPosition*=hackedScale;
+//					o.VSpacing*=hackedScale;
+
+					o.Position=custom*hackedScale*delta;
+					o.Spacing=Number.NaN;
+					if(i>0) {
+						var tmp:Object=polylineestimator.getItemAt(i-1);
+						tmp.Spacing=o.Position-tmp.Position;
+					}
+
+					polylineestimator.addItem(o);
+				}
+
+				const o1:Object=new Object;
+				const o2:Object=new Object;
+
+				const srctmp:Object=polylineestimator.getItemAt(0);
+				const dsttmp:Object=polylineestimator.getItemAt(polylineestimator.length-1);
+				o1.Position=srctmp.Position;
+				o2.Position=dsttmp.Position;
+				o1.Spacing=o2.Spacing=(o2.Position-o1.Position)/(polylineestimator.length);
+
+				o1.sno=first;
+				o1.HStretch=src._urate;
+				o1.VStretch=src._vrate;
+				o1.Rotation1=rot1.get(first);
+				o1.Rotation2=rot2.get(first);
+				o1.Rotation3=rot3.get(first);
+				o2.sno=last;
+				o2.HStretch=dst._urate;
+				o2.VStretch=dst._vrate;
+				o2.Rotation1=rot1.get(last);
+				o2.Rotation2=rot2.get(last);
+				o2.Rotation3=rot3.get(last);
+				if(main.valbox.decompcfg.selectedLabel=="Coronal") {
+					o1.MainPosition=src._my;
+					o1.MainSpacing=yspacing.get(first);
+					o1.HPosition=src._mx;
+					o1.HSpacing=xspacing.get(first);
+					o1.VPosition=src._mz;
+					o1.VSpacing=zspacing.get(first);
+
+					o2.MainPosition=dst._my;
+					o2.MainSpacing=yspacing.get(last);
+					o2.HPosition=dst._mx;
+					o2.HSpacing=xspacing.get(last);
+					o2.VPosition=dst._mz;
+					o2.VSpacing=zspacing.get(last);
+				} else if(main.valbox.decompcfg.selectedLabel=="Sagittal") {
+					o1.MainPosition=src._mx;
+					o1.MainSpacing=xspacing.get(first);
+					o1.HPosition=src._my;
+					o1.HSpacing=yspacing.get(first);
+					o1.VPosition=src._mz;
+					o1.VSpacing=zspacing.get(first);
+
+					o2.MainPosition=dst._mx;
+					o2.MainSpacing=yspacing.get(last);
+					o2.HPosition=dst._my;
+					o2.HSpacing=yspacing.get(last);
+					o2.VPosition=dst._mz;
+					o2.VSpacing=zspacing.get(last);
+				} else if(main.valbox.decompcfg.selectedLabel=="Horizontal") {
+					o1.MainPosition=src._mz;
+					o1.MainSpacing=zspacing.get(first);
+					o1.HPosition=src._my;
+					o1.HSpacing=yspacing.get(first);
+					o1.VPosition=src._mx;
+					o1.VSpacing=xspacing.get(first);
+
+					o2.MainPosition=dst._mz;
+					o2.MainSpacing=zspacing.get(last);
+					o2.HPosition=dst._my;
+					o2.HSpacing=yspacing.get(last);
+					o2.VPosition=dst._mx;
+					o2.VSpacing=xspacing.get(last);
+				}
+
+				o1.MainPosition*=hackedScale;
+//				o1.MainSpacing*=hackedScale;
+				o1.HPosition*=hackedScale;
+//				o1.HSpacing*=hackedScale;
+				o1.VPosition*=hackedScale;
+//				o1.VSpacing*=hackedScale;
+				o2.MainPosition*=hackedScale;
+//				o2.MainSpacing*=hackedScale;
+				o2.HPosition*=hackedScale;
+//				o2.HSpacing*=hackedScale;
+				o2.VPosition*=hackedScale;
+//				o2.VSpacing*=hackedScale;
+
+				regressionestimator.addItem(o1);
+				regressionestimator.addItem(o2);
+			}
+
+			protected function seriescanvas_resizeHandler(event:ResizeEvent):void {
+				slicesbtn.y=exportbtn.y=savebtn.y=jsonbtn.y=loadbtn.y=addchart.y=seriescanvas.height-savebtn.height-10;
+				stuff.height=savebtn.y-10-10;
+			}
+
+			protected function addchart_clickHandler(event:MouseEvent):void {
+				var w:MDIWindow=new MDIWindow;
+				w.title="Chart "+(MDImain.windowManager.windowList.length-2);
+				w.addChild(new SeriesChart);
+				MDImain.windowManager.add(w);
+			}
+
+			protected function exportbtn_clickHandler(event:MouseEvent):void {
+				const f:File=new File;
+				f.addEventListener(Event.SELECT,exportSelected);
+				f.browseForSave("Series");
+			}
+			protected function exportSelected(e:Event):void {
+				const f:File=e.target as File;
+				
+				const fs:FileStream=new FileStream;
+				fs.open(f,FileMode.WRITE);
+				fs.writeUTFBytes("<?xml version='1.0' encoding='UTF-8'?>\r\n");
+				fs.writeUTFBytes("<series name='"+xmltitl+"' target='"+main.pack+"' target-resolution='"+main.xdim+" "+main.ydim+" "+main.zdim+"'>\r\n");
+				for(var i:int=0;i<rows.length;i++) {
+					var l:SliceData=rows.getItemAt(i) as SliceData;
+					fs.writeUTFBytes("    <slice filename='"+l.filename+"' nr='"+l.sno+"' width='"+l.width+"' height='"+l.height);
+					var a:Vector.<Number>=l.pack();
+					var prefixes:Array=["' anchoring='ox=","&amp;oy=","&amp;oz=","&amp;ux=","&amp;uy=","&amp;uz=","&amp;vx=","&amp;vy=","&amp;vz="];
+					for(var j:int=0;j<9;j++)
+						fs.writeUTFBytes(prefixes[j]+a[j]);
+					fs.writeUTFBytes("'/>\r\n");
+				}
+				fs.writeUTFBytes("</series>\r\n");
+				fs.close();
+			}
+
+			public static var pb_hack:ProgressBar;
+			protected function slicesbtn_clickHandler(event:MouseEvent):void {
+				pb.x=(width-pb.width)/2;
+				pb.y=(height-pb.height)/2;
+				pb_hack=pb;
+				main.QSlices();
+			}
+		]]>
+	</mx:Script>
+	<containers:MDICanvas id="MDImain" width="100%" height="100%">
+		<containers:MDIWindow id="serieswindow" title="Image series" showCloseButton="false" minWidth="725" maxWidth="725" width="725" minHeight="250" height="250">
+			<mx:Canvas id="seriescanvas" width="100%" height="100%" resize="seriescanvas_resizeHandler(event)">
+				<mx:DataGrid id="stuff" x="10" y="10" editable="true" width="700" sortableColumns="false" dataProvider="{rows}" draggableColumns="false" itemDoubleClick="stuff_itemDoubleClickHandler(event)" doubleClickEnabled="true">
+					<mx:columns>
+						<mx:DataGridColumn dataField="filename" sortable="false" headerText="File" editable="false"/>
+						<mx:DataGridColumn dataField="sno" headerText="s#" editable="false" width="40"/>
+						<mx:DataGridColumn dataField="width" headerText="width" editable="false" width="80"/>
+						<mx:DataGridColumn dataField="height" headerText="height" editable="false" width="80"/>
+						<mx:DataGridColumn dataField="{main.valbox.decompcfg.selectedIndex==0?'_my':main.valbox.decompcfg.selectedIndex==1?'_mx':'_mz'}" headerText="level" editable="false"/>
+						<mx:DataGridColumn dataField="hasanchoring" headerText="status" editable="false">
+							<mx:itemRenderer>
+								<mx:Component>
+									<mx:HBox horizontalAlign="center" verticalAlign="middle">
+										<mx:Script>
+											<![CDATA[
+												private var obj:SliceData;
+												override public function set data(value:Object):void {
+													super.data=value;
+													obj=value as SliceData;
+													doStuff();
+												}
+
+												protected function doStuff():void {
+													if(obj.hasanchoring) {
+														statelbl.text="!";
+														statelbl.getTextField().backgroundColor=0x80ff80;
+														clearbtn.visible=clearbtn.enabled=true;
+													} else {
+														statelbl.text="?";
+														statelbl.getTextField().backgroundColor=0xff0000;
+														clearbtn.visible=clearbtn.enabled=false;
+													}
+													statelbl.getTextField().background=true;
+												}
+
+												protected function clearbtn_clickHandler(event:MouseEvent):void {
+													obj.clear();
+													doStuff();
+													MgmtPanel.interpolate();
+													MgmtPanel.main.seriescontrols();
+													MgmtPanel.mystic_update();
+												}
+											]]>
+										</mx:Script>
+										<local:BGLabel id="statelbl" fontFamily="Arial" fontSize="16" fontWeight="bold" textAlign="center"/>
+										<mx:Button id="clearbtn" label="Clear" click="clearbtn_clickHandler(event)"/>
+									</mx:HBox>
+								</mx:Component>
+							</mx:itemRenderer>
+						</mx:DataGridColumn>
+					</mx:columns>
+				</mx:DataGrid>
+				<mx:Button x="10" id="loadbtn" label="Load" click="button1_clickHandler(event)"/>
+				<mx:Button x="612" id="addchart" label="Add Chart" click="addchart_clickHandler(event)"/>
+				<mx:Button x="71" id="savebtn" label="Save XML" enabled="{rows.length>0}" click="button3_clickHandler(event)"/>
+				<mx:Button x="159" id="jsonbtn" label="Save JSON" enabled="{rows.length>0}" click="jsonSave()"/>
+				<mx:Button x="467" id="exportbtn" label="Export Propagation" enabled="{rows.length>0}" click="exportbtn_clickHandler(event)"/>
+				<mx:Button x="360" id="slicesbtn" label="Export Slices" enabled="{rows.length>0}" click="slicesbtn_clickHandler(event)"/>
+			</mx:Canvas>
+		</containers:MDIWindow>
+		<containers:MDIWindow id="chartwindow" title="Chart" x="726" width="250" minWidth="250">
+			<local:SeriesChart/>
+		</containers:MDIWindow>
+	</containers:MDICanvas>
+	<mx:ProgressBar id="pb" visible="false" label="%1 / %2" mode="manual">
+	</mx:ProgressBar>
+</mx:Window>
