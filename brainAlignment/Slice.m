@@ -20,7 +20,7 @@ classdef Slice
 
         % Experimental data
 
-        parentFolder char {mustBeTextScalar,mustBeFolder} = "C:\"   % Main mouse folder
+        parentFolder char {mustBeTextScalar,mustBeFolder} = pwd   % Main mouse folder
         channelNames cell {mustBeText}                  % Names of the fluorescence channels
         hiResFilenames cell {mustBeText}                % Filename of the High-resolution images
         dots cell                                       % Tables with x-y dots locations for each channel
