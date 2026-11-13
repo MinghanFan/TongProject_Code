@@ -4,7 +4,7 @@ clear; clc; close all;
 %% Settings
 mouseID = 'CC1A';
 sliceNames = {
-    'CC1A_070_A4_1'
+    'CC1A_019_B1_1'
 };
 lcID = 147;
 projectFolder = '/Users/minghanfan/Desktop/TongProject/TongProject_Code';
